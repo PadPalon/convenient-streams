@@ -1,5 +1,7 @@
 package ch.neukom.convenientstreams;
 
+import com.google.common.collect.Lists;
+
 import java.util.*;
 import java.util.function.BiConsumer;
 import java.util.function.BinaryOperator;
@@ -9,27 +11,48 @@ import java.util.stream.Collector;
 import java.util.stream.Stream;
 
 /**
- * TODO document
+ * collection of collectors to be used on {@link Try}
  */
 public class TryCollectors {
-    public static <P, E extends Exception> Collector<Try<P, E>, HashSet<Exception>, Boolean> isSuccess() {
-        return new Collector<Try<P, E>, HashSet<Exception>, Boolean>() {
+    private TryCollectors() {
+    }
+
+    /**
+     * @param <P> value type of Try
+     * @param <E> exception type of Try
+     * @return a collector that returns true if no exception was caught in any Try, false otherwise
+     */
+    public static <P, E extends Exception> Collector<Try<P, E>, HashSet<E>, Boolean> isSuccess() {
+        return hasState(true);
+    }
+
+    /**
+     * @param <P> value type of Try
+     * @param <E> exception type of Try
+     * @return a collector that returns true if an exception was caught in any Try, false otherwise
+     */
+    public static <P, E extends Exception> Collector<Try<P, E>, HashSet<E>, Boolean> isFailure() {
+        return hasState(false);
+    }
+
+    private static <P, E extends Exception> Collector<Try<P, E>, HashSet<E>, Boolean> hasState(boolean isSuccess) {
+        return new Collector<Try<P, E>, HashSet<E>, Boolean>() {
             @Override
-            public Supplier<HashSet<Exception>> supplier() {
+            public Supplier<HashSet<E>> supplier() {
                 return HashSet::new;
             }
 
             @Override
-            public BiConsumer<HashSet<Exception>, Try<P, E>> accumulator() {
+            public BiConsumer<HashSet<E>, Try<P, E>> accumulator() {
                 return (exceptions, trying) -> {
-                    if(trying.failure()) {
+                    if(isSuccess ? trying.success() : trying.failure()) {
                         exceptions.add(trying.getException());
                     }
                 };
             }
 
             @Override
-            public BinaryOperator<HashSet<Exception>> combiner() {
+            public BinaryOperator<HashSet<E>> combiner() {
                 return (first, second) -> {
                     first.addAll(second);
                     return first;
@@ -37,7 +60,7 @@ public class TryCollectors {
             }
 
             @Override
-            public Function<HashSet<Exception>, Boolean> finisher() {
+            public Function<HashSet<E>, Boolean> finisher() {
                 return HashSet::isEmpty;
             }
 
@@ -48,84 +71,52 @@ public class TryCollectors {
         };
     }
 
+    /**
+     * @param <P> value type of Try
+     * @param <E> exception type of Try
+     * @return a collector that collects the values of all successfully executed functions
+     */
     public static <P, E extends Exception> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>> collectSuccess() {
-        return new Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>>() {
-            @Override
-            public Supplier<ArrayList<Try<P, E>>> supplier() {
-                return ArrayList::new;
+        return collectList((list, trying) -> {
+            if(trying.success()) {
+                list.add(trying);
             }
-
-            @Override
-            public BiConsumer<ArrayList<Try<P, E>>, Try<P, E>> accumulator() {
-                return (list, trying) -> {
-                    if(trying.success()) {
-                        list.add(trying);
-                    }
-                };
-            }
-
-            @Override
-            public BinaryOperator<ArrayList<Try<P, E>>> combiner() {
-                return (first, second) -> {
-                    first.addAll(second);
-                    return first;
-                };
-            }
-
-            @Override
-            public Function<ArrayList<Try<P, E>>, Stream<P>> finisher() {
-                return list -> list.stream().map(Try::getValue);
-            }
-
-            @Override
-            public Set<Characteristics> characteristics() {
-                return EnumSet.of(Characteristics.UNORDERED);
-            }
-        };
+        });
     }
 
-    public static <P, E extends Exception> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>> collectAndThrow() {
-        return new Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>>() {
-            @Override
-            public Supplier<ArrayList<Try<P, E>>> supplier() {
-                return ArrayList::new;
+    /**
+     * @param <P> value type of Try
+     * @param <E> exception type of Try
+     * @return a collector that assumes all functions where executed successfully and collects their values, throws a {@link TryCollectorException} otherwise
+     */
+    public static <P, E extends Exception> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>> collectOrThrow() {
+        return collectList((list, trying) -> {
+            if(trying.success()) {
+                list.add(trying);
+            } else {
+                throw new TryCollectorException(trying.getException());
             }
-
-            @Override
-            public BiConsumer<ArrayList<Try<P, E>>, Try<P, E>> accumulator() {
-                return (list, trying) -> {
-                    if(trying.success()) {
-                        list.add(trying);
-                    } else {
-                        throw new TryCollectorException(trying.getException());
-                    }
-                };
-            }
-
-            @Override
-            public BinaryOperator<ArrayList<Try<P, E>>> combiner() {
-                return (first, second) -> {
-                    first.addAll(second);
-                    return first;
-                };
-            }
-
-            @Override
-            public Function<ArrayList<Try<P, E>>, Stream<P>> finisher() {
-                return list -> list.stream().map(Try::getValue);
-            }
-
-            @Override
-            public Set<Characteristics> characteristics() {
-                return EnumSet.of(Characteristics.UNORDERED);
-            }
-        };
+        });
     }
 
+    /**
+     * @param <P> value type of Try
+     * @param <E> exception type of Try
+     * @return a collector that collects the values of all executed functions up until the first caught exception
+     */
     public static <P, E extends Exception> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>> collectUntilException() {
-        return new Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>>() {
-            private boolean failureFound = false;
+        List<Exception> exceptions = Lists.newArrayList();
+        return collectList((list, trying) -> {
+            if(exceptions.isEmpty() && trying.success()) {
+                list.add(trying);
+            } else {
+                exceptions.add(trying.getException());
+            }
+        });
+    }
 
+    private static <P, E extends Exception> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>> collectList(final BiConsumer<ArrayList<Try<P, E>>, Try<P, E>> accumulator) {
+        return new Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>>() {
             @Override
             public Supplier<ArrayList<Try<P, E>>> supplier() {
                 return ArrayList::new;
@@ -133,13 +124,7 @@ public class TryCollectors {
 
             @Override
             public BiConsumer<ArrayList<Try<P, E>>, Try<P, E>> accumulator() {
-                return (list, trying) -> {
-                    if(!failureFound && trying.success()) {
-                        list.add(trying);
-                    } else {
-                        failureFound = true;
-                    }
-                };
+                return accumulator;
             }
 
             @Override
@@ -162,6 +147,9 @@ public class TryCollectors {
         };
     }
 
+    /**
+     *
+     */
     private static class TryCollectorException extends RuntimeException {
         public TryCollectorException(Throwable cause) {
             super(cause);
