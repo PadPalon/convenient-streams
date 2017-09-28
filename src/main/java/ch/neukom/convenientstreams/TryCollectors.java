@@ -115,8 +115,25 @@ public class TryCollectors {
         });
     }
 
-    private static <P, E extends Exception> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>> collectList(final BiConsumer<ArrayList<Try<P, E>>, Try<P, E>> accumulator) {
-        return new Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>>() {
+    /**
+     * @param <P> value type of Try
+     * @param <E> exception type of Try
+     * @return a collector that collects the values of all executed functions up until the first caught exception
+     */
+    public static <P, E extends Exception> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<E>> collectExceptions() {
+        return collectList((list, trying) -> {
+            if(trying.failure()) {
+                list.add(trying);
+            }
+        }, Try::getException);
+    }
+
+    private static <P, E extends Exception> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<P>> collectList(BiConsumer<ArrayList<Try<P, E>>, Try<P, E>> accumulator) {
+        return collectList(accumulator, Try::getValue);
+    }
+
+    private static <P, E extends Exception, R> Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<R>> collectList(BiConsumer<ArrayList<Try<P, E>>, Try<P, E>> accumulator, Function<Try<P, E>, R> finisher) {
+        return new Collector<Try<P, E>, ArrayList<Try<P, E>>, Stream<R>>() {
             @Override
             public Supplier<ArrayList<Try<P, E>>> supplier() {
                 return ArrayList::new;
@@ -136,8 +153,8 @@ public class TryCollectors {
             }
 
             @Override
-            public Function<ArrayList<Try<P, E>>, Stream<P>> finisher() {
-                return list -> list.stream().map(Try::getValue);
+            public Function<ArrayList<Try<P, E>>, Stream<R>> finisher() {
+                return list -> list.stream().map(finisher);
             }
 
             @Override
